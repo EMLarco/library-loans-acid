@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Biblioteca ACID - Esteban Larco</title>
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --ink:#1d2433; --muted:#667085; --pri:#2952cc; --ok:#1a7f4b; --bad:#c4321f; --warn:#b26b00; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--ink); font-size:14px; }
+  header { background:#1d2433; color:#fff; padding:10px 18px; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:17px; margin:0; }
+  header small { color:#b8c2d9; }
+  nav { display:flex; gap:4px; padding:8px 18px 0; background:#e7ebf3; }
+  nav button { border:0; background:transparent; padding:9px 14px; cursor:pointer; font-size:14px; border-radius:6px 6px 0 0; }
+  nav button.active { background:var(--bg); font-weight:600; color:var(--pri); }
+  main { display:grid; grid-template-columns: 1fr 470px; gap:14px; padding:14px 18px; }
+  .card { background:var(--card); border-radius:8px; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); margin-bottom:12px; }
+  .card h2 { font-size:15px; margin:0 0 10px; }
+  .tab { display:none; } .tab.active { display:block; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border-bottom:1px solid #e4e7ec; padding:5px 6px; text-align:left; }
+  th { background:#f0f2f7; }
+  input, select { padding:5px 7px; border:1px solid #c9ced8; border-radius:5px; font-size:13px; }
+  button.b { background:var(--pri); color:#fff; border:0; border-radius:5px; padding:6px 11px; cursor:pointer; font-size:13px; margin:2px; }
+  button.b.red { background:var(--bad); } button.b.green { background:var(--ok); } button.b.gray { background:#667085; } button.b.warn { background:var(--warn); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+  pre { background:#0f1420; color:#d6e2ff; padding:10px; border-radius:6px; font-size:12px; white-space:pre-wrap; max-height:430px; overflow:auto; margin:0; }
+  #log { height:calc(100vh - 170px); overflow:auto; background:#0f1420; color:#cfd8ea; font-family:Consolas,monospace; font-size:12px; padding:8px; border-radius:6px; }
+  #log div { padding:1px 0; }
+  .s-TX { color:#ffd166; font-weight:bold; } .s-PROXY { color:#7fd1ff; } .s-OBSERVER { color:#b39dff; } .s-ADAPTER { color:#7ee2a8; }
+  .s-CIRCUIT { color:#ff8c7a; font-weight:bold; } .s-SERV\.EXTERNO { color:#f6a6ff; } .s-PRESTAMO { color:#9fe7ff; } .s-CRUD { color:#c6f68d; }
+  .badge { display:inline-block; padding:4px 10px; border-radius:12px; font-weight:bold; color:#fff; }
+  .CLOSED { background:var(--ok); } .OPEN { background:var(--bad); } .HALF_OPEN { background:var(--warn); }
+  .msg { margin-top:8px; padding:7px 9px; border-radius:5px; font-size:13px; }
+  .msg.ok { background:#e5f5ec; color:var(--ok); } .msg.err { background:#fdecea; color:var(--bad); }
+  .yes { color:var(--ok); font-weight:600; } .no { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>📚 Biblioteca – Consistencia transaccional (SOLID · Proxy · Observer · Adapter · Circuit Breaker · ACID)</h1>
+  <small>Esteban Marcelo Larco Fernández · Library Management · Java 17 + Spring Boot + PostgreSQL</small></div>
+  <small id="rt">conectando…</small>
+</header>
+<nav>
+  <button data-tab="libros" class="active">Libros (CRUD)</button>
+  <button data-tab="prestamos">Préstamos</button>
+  <button data-tab="acid">Pruebas ACID</button>
+  <button data-tab="patrones">Patrones</button>
+  <button data-tab="bd">Base de datos</button>
+</nav>
+<main>
+<section>
+  <!-- ======================= LIBROS ======================= -->
+  <div id="libros" class="tab active">
+    <div class="card"><h2>Registrar / editar libro</h2>
+      <div class="row">
+        <input id="bId" placeholder="ID (vacío = nuevo)" size="10" readonly>
+        <input id="bTitle" placeholder="Título" size="28">
+        <select id="bAuthor"></select>
+        <input id="bIsbn" placeholder="ISBN" size="16">
+        <input id="bDate" type="date">
+        <select id="bGenre"><option value="1">Novela</option><option value="2">Ciencia ficción</option><option value="3">Historia</option><option value="4">Tecnología</option><option value="5">Poesía</option></select>
+      </div>
+      <button class="b green" onclick="saveBook()">Guardar</button>
+      <button class="b gray" onclick="clearBook()">Limpiar</button>
+      <label style="margin-left:14px"><input type="checkbox" id="showInactive" onchange="loadBooks()"> mostrar eliminados lógicamente</label>
+      <div id="bMsg"></div>
+    </div>
+    <div class="card"><h2>Libros</h2><table id="booksT"></table></div>
+  </div>
+
+  <!-- ======================= PRESTAMOS ======================= -->
+  <div id="prestamos" class="tab">
+    <div class="card"><h2>Operación principal: préstamo de libro (transacción)</h2>
+      <div class="row">Usuario <input id="uName" value="esteban" size="10">
+        Rol <select id="uRole"><option>BIBLIOTECARIO</option><option>ADMIN</option><option>SOCIO</option></select></div>
+      <div class="row">Socio <select id="lMember"></select> Libro <select id="lBook"></select>
+        Días <input id="lDays" type="number" value="14" style="width:60px">
+        <button class="b green" onclick="borrow()">Registrar préstamo</button></div>
+      <div id="lMsg"></div>
+    </div>
+    <div class="card"><h2>Préstamos</h2><table id="loansT"></table></div>
+  </div>
+
+  <!-- ======================= ACID ======================= -->
+  <div id="acid" class="tab">
+    <div class="card"><h2>A · Atomicidad (error simulado → ROLLBACK)</h2>
+      <div class="row">Socio <select id="aMember"></select> Libro disponible <select id="aBook"></select>
+        <button class="b red" onclick="demo('atomicity', {memberId:v('aMember'), bookId:v('aBook')})">Ejecutar préstamo con ERROR SIMULADO</button></div>
+    </div>
+    <div class="card"><h2>C · Consistencia (operaciones inválidas)</h2>
+      <button class="b warn" onclick="demo('consistency', {})">Ejecutar casos inválidos</button></div>
+    <div class="card"><h2>I · Aislamiento (2 préstamos concurrentes del mismo libro)</h2>
+      <div class="row">Libro <select id="cBook"></select> Cliente A: socio <select id="cA"></select> Cliente B: socio <select id="cB"></select>
+        <button class="b" onclick="demo('concurrency', {bookId:v('cBook'), memberA:v('cA'), memberB:v('cB')})">Lanzar ambos a la vez</button></div>
+    </div>
+    <div class="card"><h2>D · Durabilidad (consultar después de reiniciar)</h2>
+      <button class="b gray" onclick="runtime()">Consultar estado / PID de la aplicación</button></div>
+    <div class="card"><h2>Resultado</h2><pre id="demoOut">—</pre></div>
+  </div>
+
+  <!-- ======================= PATRONES ======================= -->
+  <div id="patrones" class="tab">
+    <div class="card"><h2>Proxy · LoanController → LoanServiceProxy → LoanServiceImpl</h2>
+      <div class="row">Socio <select id="pMember"></select> Libro <select id="pBook"></select>
+        <button class="b red" onclick="proxyTry('SOCIO')">Intentar préstamo con rol SOCIO</button>
+        <button class="b green" onclick="proxyTry('BIBLIOTECARIO')">Intentar con rol BIBLIOTECARIO</button></div>
+      <div id="pMsg"></div>
+    </div>
+    <div class="card"><h2>Observer · Adapter · OCP — Devolver libro y pagar multa</h2>
+      <div class="row">Préstamo activo <select id="rLoan"></select> <button class="b" onclick="returnLoan()">Devolver (evento PRESTAMO_DEVUELTO)</button></div>
+      <div class="row">Préstamo con multa <select id="fLoan"></select> Método <select id="fMethod"></select>
+        <button class="b green" onclick="payFine()">Pagar multa</button></div>
+      <div id="fMsg"></div>
+    </div>
+    <div class="card"><h2>Circuit Breaker · servicio externo "Banco Legacy"</h2>
+      <div class="row">Estado: <span id="cbState" class="badge CLOSED">CLOSED</span> <span id="cbInfo"></span></div>
+      <div class="row">Servicio externo: <b id="extState">—</b></div>
+      <button class="b red" onclick="extMode(true)">1. Simular caída del servicio</button>
+      <button class="b" onclick="cbCall()">2. Llamar al servicio (pago de prueba)</button>
+      <button class="b green" onclick="extMode(false)">3. Recuperar servicio</button>
+      <div id="cbMsg"></div>
+    </div>
+    <div class="card"><h2>Auditoría (tabla audit_log)</h2><table id="auditT"></table></div>
+  </div>
+
+  <!-- ======================= BD ======================= -->
+  <div id="bd" class="tab">
+    <div class="card"><h2>Contenido real de PostgreSQL</h2>
+      <div class="row"><select id="tName"><option>books</option><option>loans</option><option>members</option><option>authors</option><option>categories</option><option>audit_log</option></select>
+        <button class="b" onclick="loadTable()">Consultar</button></div>
+      <div style="overflow:auto"><table id="tableT"></table></div>
+    </div>
+  </div>
+</section>
+
+<aside>
+  <div class="card" style="margin:0"><h2 style="display:flex;justify-content:space-between">Bitácora en vivo (TX · Proxy · Observer · Adapter · Circuit Breaker)
+    <button class="b gray" onclick="clearLog()">Limpiar</button></h2>
+    <div id="log"></div></div>
+</aside>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const v = id => $(id).value;
+let lastSeq = 0, books = [], members = [], loans = [];
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active'); $(b.dataset.tab).classList.add('active'); refreshAll();
+});
+
+async function api(method, url, body, headers) {
+  const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...(headers || {}) }, body: body ? JSON.stringify(body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw data;
+  return data;
+}
+function msg(el, ok, text) { $(el).innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${text}</div>`; }
+function errText(e) { return `<b>${e.status || ''} ${e.error || 'Error'}</b>: ${e.message || JSON.stringify(e)}`; }
+function opts(list, val, label) { return list.map(x => `<option value="${x[val]}">${label(x)}</option>`).join(''); }
+const yn = b => b ? '<span class="yes">Sí</span>' : '<span class="no">No</span>';
+
+async function loadBooks() {
+  books = await api('GET', '/api/books?includeInactive=' + $('showInactive').checked);
+  $('booksT').innerHTML = '<tr><th>ID</th><th>Título</th><th>Autor</th><th>ISBN</th><th>Publicación</th><th>Disponible</th><th>Activo</th><th></th></tr>' +
+    books.map(b => `<tr><td>${b.bookId}</td><td>${b.title}</td><td>${b.authorName}</td><td>${b.isbn || ''}</td><td>${b.publicationDate || ''}</td>
+      <td>${yn(b.availabilityStatus)}</td><td>${yn(b.active)}</td>
+      <td><button class="b gray" onclick="editBook(${b.bookId})">Editar</button><button class="b red" onclick="delBook(${b.bookId},false)">Eliminar (lógico)</button><button class="b red" onclick="delBook(${b.bookId},true)">Físico</button></td></tr>`).join('');
+  const avail = books.filter(b => b.availabilityStatus && b.active);
+  const bOpts = opts(books.filter(b => b.active), 'bookId', b => `#${b.bookId} ${b.title} ${b.availabilityStatus ? '(disponible)' : '(prestado)'}`);
+  const aOpts = opts(avail, 'bookId', b => `#${b.bookId} ${b.title}`);
+  for (const id of ['lBook', 'pBook']) keep(id, bOpts);
+  for (const id of ['aBook', 'cBook']) keep(id, aOpts);
+}
+function keep(id, html) { const old = $(id).value; $(id).innerHTML = html; if ([...$(id).options].some(o => o.value === old)) $(id).value = old; }
+async function loadRefs() {
+  const authors = await api('GET', '/api/authors');
+  keep('bAuthor', opts(authors, 'authorId', a => a.name));
+  members = await api('GET', '/api/members');
+  const mOpts = opts(members, 'memberId', m => `#${m.memberId} ${m.name}`);
+  for (const id of ['lMember', 'aMember', 'pMember', 'cA', 'cB']) keep(id, mOpts);
+  if (!$('cB').dataset.init) { $('cB').selectedIndex = 1; $('cB').dataset.init = 1; }
+  const methods = await api('GET', '/api/loans/payment-methods');
+  keep('fMethod', methods.map(m => `<option>${m}</option>`).join(''));
+}
+function editBook(id) { const b = books.find(x => x.bookId === id);
+  $('bId').value = b.bookId; $('bTitle').value = b.title; $('bAuthor').value = b.authorId; $('bIsbn').value = b.isbn || '';
+  $('bDate').value = b.publicationDate || ''; $('bGenre').value = b.genreId || 1; }
+function clearBook() { ['bId', 'bTitle', 'bIsbn', 'bDate'].forEach(i => $(i).value = ''); }
+async function saveBook() {
+  const body = { title: v('bTitle'), authorId: +v('bAuthor'), isbn: v('bIsbn') || null, publicationDate: v('bDate') || null, genreId: +v('bGenre') };
+  try { const id = v('bId'); const r = id ? await api('PUT', '/api/books/' + id, body) : await api('POST', '/api/books', body);
+    msg('bMsg', true, `Libro #${r.bookId} "${r.title}" ${id ? 'actualizado' : 'registrado'} correctamente`); clearBook(); loadBooks();
+  } catch (e) { msg('bMsg', false, errText(e)); }
+}
+async function delBook(id, physical) {
+  try { await api('DELETE', `/api/books/${id}?physical=${physical}`); msg('bMsg', true, `Libro #${id} eliminado (${physical ? 'físico' : 'lógico: active = false'})`); loadBooks(); }
+  catch (e) { msg('bMsg', false, errText(e)); }
+}
+const caller = () => ({ 'X-User': v('uName'), 'X-Role': v('uRole') });
+async function loadLoans() {
+  loans = await api('GET', '/api/loans');
+  $('loansT').innerHTML = '<tr><th>ID</th><th>Libro</th><th>Socio</th><th>Salida</th><th>Vence</th><th>Devuelto</th><th>Multa</th><th>Multa pagada</th></tr>' +
+    loans.map(l => `<tr><td>${l.loanId}</td><td>${l.bookTitle}</td><td>${l.memberName}</td><td>${l.checkoutDate}</td><td>${l.dueDate}</td>
+      <td>${l.returnStatus ? l.returnDate : '<span class="no">activo</span>'}</td><td>$${l.fineAmount}</td><td>${l.fineAmount > 0 ? yn(l.finePaid) : '-'}</td></tr>`).join('');
+  keep('rLoan', opts(loans.filter(l => !l.returnStatus), 'loanId', l => `#${l.loanId} ${l.bookTitle} – ${l.memberName}`));
+  keep('fLoan', opts(loans.filter(l => l.fineAmount > 0 && !l.finePaid), 'loanId', l => `#${l.loanId} ${l.bookTitle} – $${l.fineAmount}`));
+}
+async function borrow() {
+  try { const l = await api('POST', '/api/loans', { memberId: +v('lMember'), bookId: +v('lBook'), days: +v('lDays') }, caller());
+    msg('lMsg', true, `COMMIT ✔ Préstamo #${l.loanId}: "${l.bookTitle}" para ${l.memberName}, vence ${l.dueDate}`);
+  } catch (e) { msg('lMsg', false, errText(e)); }
+  refreshAll();
+}
+async function proxyTry(role) {
+  try { const l = await api('POST', '/api/loans', { memberId: +v('pMember'), bookId: +v('pBook'), days: 7 }, { 'X-User': role === 'SOCIO' ? 'socio.curioso' : 'esteban', 'X-Role': role });
+    msg('pMsg', true, `Proxy permitió la operación → préstamo #${l.loanId} creado`);
+  } catch (e) { msg('pMsg', false, errText(e)); }
+  refreshAll();
+}
+async function returnLoan() {
+  try { const l = await api('POST', `/api/loans/${v('rLoan')}/return`, null, { 'X-User': 'esteban', 'X-Role': 'BIBLIOTECARIO' });
+    msg('fMsg', true, `Préstamo #${l.loanId} devuelto. Multa $${l.fineAmount}`); } catch (e) { msg('fMsg', false, errText(e)); }
+  refreshAll();
+}
+async function payFine() {
+  try { const r = await api('POST', `/api/loans/${v('fLoan')}/pay-fine?method=${v('fMethod')}`, null, { 'X-User': 'esteban', 'X-Role': 'BIBLIOTECARIO' });
+    msg('fMsg', true, `Pago ${r.method} aprobado. Ref ${r.reference} – ${r.message}`); } catch (e) { msg('fMsg', false, errText(e)); }
+  refreshAll();
+}
+async function demo(name, params) {
+  $('demoOut').textContent = 'Ejecutando…';
+  const q = new URLSearchParams(params).toString();
+  try { $('demoOut').textContent = JSON.stringify(await api('POST', `/api/demo/${name}?${q}`), null, 2); }
+  catch (e) { $('demoOut').textContent = JSON.stringify(e, null, 2); }
+  refreshAll();
+}
+async function runtime() { $('demoOut').textContent = JSON.stringify(await api('GET', '/api/demo/runtime'), null, 2); }
+async function extMode(fail) { await api('POST', '/external/legacy-bank/mode?fail=' + fail); refreshCb(); }
+async function cbCall() {
+  try { const r = await api('POST', '/api/circuit/test-call'); msg('cbMsg', true, `Respuesta: ${r.message} (auth ${r.reference})`); }
+  catch (e) { msg('cbMsg', false, errText(e)); }
+  refreshCb();
+}
+async function refreshCb() {
+  const s = await api('GET', '/api/circuit');
+  $('cbState').className = 'badge ' + s.state; $('cbState').textContent = s.state.replace('_', '-');
+  $('cbInfo').textContent = `fallos consecutivos ${s.consecutiveFailures}/${s.failureThreshold} · tiempo OPEN ${s.openSeconds}s` + (s.secondsUntilHalfOpen !== undefined ? ` · HALF-OPEN en ${s.secondsUntilHalfOpen}s` : '');
+  const e = await api('GET', '/external/legacy-bank/mode');
+  $('extState').innerHTML = (e.failing ? '<span class="no">CAÍDO (responde 503)</span>' : '<span class="yes">OPERATIVO</span>') + ` · solicitudes recibidas: ${e.requestsReceived}`;
+}
+async function loadAudit() {
+  const a = await api('GET', '/api/audit?limit=12');
+  $('auditT').innerHTML = '<tr><th>ID</th><th>Evento</th><th>Por</th><th>Detalle</th><th>Fecha</th></tr>' +
+    a.map(r => `<tr><td>${r.audit_id}</td><td>${r.event_type}</td><td>${r.performed_by}</td><td>${r.details}</td><td>${r.created_at}</td></tr>`).join('');
+}
+async function loadTable() {
+  const rows = await api('GET', '/api/demo/table/' + v('tName'));
+  if (!rows.length) { $('tableT').innerHTML = '<tr><td>(sin filas)</td></tr>'; return; }
+  const cols = Object.keys(rows[0]);
+  $('tableT').innerHTML = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>' + rows.map(r => '<tr>' + cols.map(c => `<td>${r[c] ?? 'NULL'}</td>`).join('') + '</tr>').join('');
+}
+async function pollLog() {
+  try { const items = await api('GET', '/api/activity?after=' + lastSeq);
+    for (const e of items) { const d = document.createElement('div');
+      d.innerHTML = `<span style="color:#8892a6">${e.time}</span> <span class="s-${e.source}">[${e.source}]</span> ${e.message.replace(/</g, '&lt;')}`;
+      $('log').appendChild(d); lastSeq = e.seq; }
+    if (items.length) $('log').scrollTop = $('log').scrollHeight;
+  } catch (e) { }
+}
+async function clearLog() { await api('DELETE', '/api/activity'); $('log').innerHTML = ''; }
+async function header() {
+  try { const r = await api('GET', '/api/demo/runtime');
+    $('rt').innerHTML = `PID ${r.pid_aplicacion} · app iniciada ${r.aplicacion_iniciada.replace('T', ' ').slice(0, 19)} · ${r.estado.total_prestamos} préstamos en BD`;
+  } catch (e) { $('rt').textContent = 'sin conexión'; }
+}
+async function refreshAll() { await Promise.all([loadBooks(), loadLoans(), refreshCb(), loadAudit(), header()]).catch(() => {}); }
+(async () => { await loadRefs(); await refreshAll(); loadTable(); })();
+setInterval(pollLog, 800);
+setInterval(refreshCb, 1000);
+</script>
+</body>
+</html>

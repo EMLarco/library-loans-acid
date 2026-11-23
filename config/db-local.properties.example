@@ -1,0 +1,3 @@
+# Copiar como db-local.properties y completar. NO subir este archivo con la contraseña real.
+app.db.user=biblio_app
+app.db.password=CAMBIAR
